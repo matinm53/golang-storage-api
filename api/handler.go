@@ -1,13 +1,15 @@
 package api
 
 import (
-	"io"
+	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
+	"strings"
+
+	"github.com/matinm53/golang-storage-api/storage"
 )
 
-const uploadDir = "./uploads"
+var store = storage.NewLocalStorage("./uploads")
 
 func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -22,21 +24,51 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	os.MkdirAll(uploadDir, os.ModePerm)
-	out, err := os.Create(filepath.Join(uploadDir, header.Filename))
+	err = store.SaveFile(header.Filename, file)
 	if err != nil {
 		http.Error(w, "Unable to save file", http.StatusInternalServerError)
 		return
 	}
-	defer out.Close()
 
-	io.Copy(out, file)
 	w.Write([]byte("Uploaded successfully"))
 }
 
 func FileHandler(w http.ResponseWriter, r *http.Request) {
-	fileName := filepath.Base(r.URL.Path)
-	filePath := filepath.Join(uploadDir, fileName)
+	filename := path.Base(strings.TrimPrefix(r.URL.Path, "/file/"))
+	file, err := store.ReadFile(filename)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	defer file.Close()
 
-	http.ServeFile(w, r, filePath)
+	info, err := file.Stat()
+	if err != nil {
+		http.Error(w, "File error", http.StatusInternalServerError)
+		return
+	}
+
+	http.ServeContent(w, r, filename, info.ModTime(), file)
+}
+
+func FileReviewHandler(w http.ResponseWriter, r *http.Request) {
+	filename := path.Base(strings.TrimPrefix(r.URL.Path, "/file-review/"))
+	file, err := store.ReadFile(filename)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		http.Error(w, "Error reading file info", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"name":         info.Name(),
+		"size":         info.Size(),
+		"modifiedTime": info.ModTime(),
+	})
 }
